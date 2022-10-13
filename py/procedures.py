@@ -36,8 +36,6 @@ def render_image(
 ) -> torch.Tensor:
     if not isinstance(image_size, Iterable):
         image_size = (image_size, image_size)
-    is_ref_model = type(network) == RefNeRF
-    render_normal &= is_ref_model
     target_device = render_pose.device
     col_idxs, row_idxs = torch.meshgrid(torch.arange(image_size[1]), torch.arange(image_size[0]), indexing = 'xy')      # output shape (imagesize[1], imagesize[0])
     coords = torch.stack((col_idxs - image_size[1] / 2, image_size[0] / 2 - row_idxs), dim = -1).to(target_device)
@@ -67,14 +65,9 @@ def render_image(
             prop_weights_raw = ProposalNetwork.get_weights(density, sampled_lengths, camera_rays[:, 3:])      # (ray_num, num of proposal interval)
             prop_weights = maxBlurFilter(prop_weights_raw, 0.01)
             fine_lengths, _ = inverseSample(prop_weights, sampled_lengths, sample_num + 1, sort = True)
-            if is_ref_model:
-                fine_samples, fine_lengths = NeRF.coarseFineMerge(camera_rays, sampled_lengths, fine_lengths)
-                output_rgbo, normal = network.forward(fine_samples)
-                output_rgbo[..., -1] = softplus(output_rgbo[..., -1] + 0.5)
-            else:
-                fine_lengths = fine_lengths[..., :-1]
-                fine_samples = NeRF.length2pts(camera_rays, fine_lengths)
-                output_rgbo = network.forward(fine_samples)
+            fine_samples, fine_lengths = NeRF.coarseFineMerge(camera_rays, sampled_lengths, fine_lengths)
+            output_rgbo, normal = network.forward(fine_samples)
+            output_rgbo[..., -1] = softplus(output_rgbo[..., -1] + 0.5)
 
             part_image, _, extras = NeRF.render(
                 output_rgbo, fine_lengths, camera_rays[..., 3:], 
@@ -129,11 +122,11 @@ def render_only(args, model_path: str, opt_level: str):
 
     if use_ref_nerf:
         from py.ref_model import RefNeRF
-        mip_net = RefNeRF(10, args.ide_level, hidden_unit = args.nerf_net_width, perturb_bottle_neck_w = args.bottle_neck_noise, use_srgb = args.use_srgb).cuda()
+        mip_net = RefNeRF(10, args.ide_level, hidden_unit = args.nerf_net_width, perturb_bottle_neck_w = args.bottle_neck_noise, use_srgb = args.use_srgb, instant_ngp = args.instnat_ngp).cuda()
     else:
         from py.mip_model import MipNeRF
         mip_net = MipNeRF(10, 4, hidden_unit = args.nerf_net_width)
-    prop_net = ProposalNetwork(10, hidden_unit = args.prop_net_width).cuda()
+    prop_net = ProposalNetwork(10, hidden_unit = args.prop_net_width, instant_ngp = args.instant_ngp).cuda()
     if use_amp and opt_mode != "native":
         from apex import amp
         [mip_net, prop_net] = amp.initialize([mip_net, prop_net], None, opt_level = opt_level)
@@ -198,9 +191,9 @@ def get_parser():
     parser.add_argument("-v", "--visualize", default = False, action = "store_true", help = "Visualize proposal network")
     parser.add_argument("-r", "--do_render", default = False, action = "store_true", help = "Only render the result")
     parser.add_argument("-w", "--white_bkg", default = False, action = "store_true", help = "Output white background")
-    parser.add_argument("-t", "--ref_nerf", default = False, action = "store_true", help = "Test Ref NeRF")
     parser.add_argument("-u", "--use_srgb", default = False, action = "store_true", help = "Whether to use srgb in the output or not")
     parser.add_argument("-e", "--eval_poses", default = False, action = "store_true", help = "Whether to use test set poses to render image")
+    parser.add_argument("-i", "--instant_ngp", default = False, action = "store_true", help = "Whether to use instant-ngp")
     # long bool options
     parser.add_argument("--render_depth", default = False, action = "store_true", help = "Render depth image")
     parser.add_argument("--render_normal", default = False, action = "store_true", help = "Render normal image")

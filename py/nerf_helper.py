@@ -3,6 +3,8 @@
     @author Enigmatisms @date 2022.4.24
 """
 import torch
+import commentjson as json
+import tinycudann as tcnn
 
 def saveModel(model, path:str, other_stuff: dict = None, opt = None, amp = None):
     checkpoint = {'model': model.state_dict(),}
@@ -34,6 +36,12 @@ def nan_hook(self, inp, output):
         if nan_mask.any():
             print("In", self.__class__.__name__)
             raise RuntimeError(f"Found NAN in output {i} at indices: ", nan_mask.nonzero(), "where:", out[nan_mask.nonzero()[:, 0].unique(sorted=True)])
+
+def hash_encoding(dim:int):
+    with open("configs/config_hash.json") as f:
+        config = json.load(f)
+    encoding = tcnn.Encoding(dim, config['encoding'], dtype=torch.float32)
+    return encoding
 
 def positional_encoding(x:torch.Tensor, freq_level:int) -> torch.Tensor:
     result = []

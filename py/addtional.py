@@ -7,7 +7,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from py.nerf_helper import makeMLP, positional_encoding
+from py.nerf_helper import makeMLP, positional_encoding, hash_encoding
 
 # according to calculated weights (of proposal net) and indices of inverse sampling, calculate the bounds required for loss computation
 # input weights (from proposal net) shape: (ray_num, num of proposal interval), inds shape (ray_num, fine_sample num + 1? TODO, 2)
@@ -59,17 +59,26 @@ class ProposalNetwork(nn.Module):
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)
 
-    def __init__(self, position_flevel, hidden_unit = 128, cat_origin = True) -> None:
+    def __init__(self, position_flevel, hidden_unit = 128, instant_ngp = False, cat_origin = True) -> None:
         super().__init__()
         self.position_dims = position_flevel * 6
         self.position_flevel = position_flevel
         self.cat_origin = cat_origin
+        self.instant_ngp = instant_ngp
+        self.encoding = hash_encoding(3)
         extra_dims = 3 if cat_origin else 0
-        self.layers = nn.Sequential(
-            *makeMLP(self.position_dims + extra_dims, hidden_unit),
-            *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),
-            *makeMLP(hidden_unit, 1, None)
-        )
+        if instant_ngp:
+            self.layers = nn.Sequential(
+                *makeMLP(self.encoding.n_output_dims + extra_dims, hidden_unit),
+                *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),
+                *makeMLP(hidden_unit, 1, None)
+            )
+        else:
+            self.layers = nn.Sequential(
+                *makeMLP(self.position_dims + extra_dims, hidden_unit),
+                *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),
+                *makeMLP(hidden_unit, 1, None)
+            )
         self.apply(self.init_weight)
 
     def loadFromFile(self, load_path:str, use_amp = False, other_stuff = None):
@@ -86,9 +95,12 @@ class ProposalNetwork(nn.Module):
         if not other_stuff is None:
             return [save[k] for k in other_stuff]
 
-    def forward(self, pts:torch.Tensor, encoded_pt:torch.Tensor = None) -> torch.Tensor:
-        if not encoded_pt is None:
-            encoded_x = encoded_pt.view(pts.shape[0], pts.shape[1], self.position_dims)
+    def forward(self, pts:torch.Tensor) -> torch.Tensor:
+        if self.instant_ngp:
+            encoding = hash_encoding(3)
+            modify_pts = pts.view([-1, 3])
+            encoded_x = encoding(modify_pts)
+            encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], self.encoding.n_output_dims)
         else:
             encoded_x = positional_encoding(pts, self.position_flevel)
         if self.cat_origin:

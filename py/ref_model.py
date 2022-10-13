@@ -10,7 +10,7 @@ from py.nerf_base import NeRF
 from typing import Optional, Tuple
 from torch.nn import functional as F
 from py.ref_func import generate_ide_fn
-from py.nerf_helper import makeMLP, positional_encoding, linear_to_srgb
+from py.nerf_helper import makeMLP, hash_encoding, linear_to_srgb, positional_encoding
 
 # Inherited from NeRF (base class)
 class RefNeRF(NeRF):
@@ -20,26 +20,41 @@ class RefNeRF(NeRF):
         hidden_unit = 256, 
         output_dim = 256, 
         use_srgb = False,
-        cat_origin = True,
+        cat_origin = False,
         perturb_bottle_neck_w = 0.1,
+        instant_ngp = False
     ) -> None:
         super().__init__(position_flevel, cat_origin, lambda x: x)          # density is not activated during render
         self.sh_max_level = sh_max_level
         self.bottle_neck_dim = bottle_neck_dim
         self.dir_enc_dim = ((1 << sh_max_level) - 1 + sh_max_level) << 1
+        self.instant_ngp = instant_ngp
 
+        self.encoding = hash_encoding(3)
         extra_width = 3 if cat_origin else 0
-        spatial_module_list = makeMLP(6 * position_flevel + extra_width, hidden_unit)
+        if instant_ngp:
+            spatial_module_list = makeMLP(self.encoding.n_output_dims + extra_width, hidden_unit)
+        else:
+            spatial_module_list = makeMLP(6 * position_flevel + extra_width, hidden_unit)
         for _ in range(3):
             spatial_module_list.extend(makeMLP(hidden_unit, hidden_unit))
 
         # spatial MLP part (spa_xxxx)
         self.spa_block1 = nn.Sequential(*spatial_module_list)       # MLP before skip connection
-        self.spa_block2 = nn.Sequential(
-            *makeMLP(hidden_unit + 6 * position_flevel + extra_width, hidden_unit),
-            *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),
-            *makeMLP(hidden_unit, output_dim)
-        )
+        if instant_ngp:
+                self.spa_block2 = nn.Sequential(
+                # *makeMLP(hidden_unit + 6 * position_flevel + extra_width, hidden_unit),
+                *makeMLP(hidden_unit + self.encoding.n_output_dims + extra_width, hidden_unit),
+                *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),
+                *makeMLP(hidden_unit, output_dim)
+            )
+        else:
+            self.spa_block2 = nn.Sequential(
+                *makeMLP(hidden_unit + 6 * position_flevel + extra_width, hidden_unit),
+                # *makeMLP(hidden_unit + self.encoding.n_output_dims + extra_width, hidden_unit),
+                *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),
+                *makeMLP(hidden_unit, output_dim)
+            )
 
         self.rho_tau_head = nn.Linear(output_dim, 2)
         self.norm_col_tint_head = nn.Linear(output_dim, 9)  # output normal prediction, color, tint (all 3)
@@ -66,10 +81,15 @@ class RefNeRF(NeRF):
 
     # for coarse network, input is obtained by sampling, sampling result is (ray_num, point_num, 9), (depth) (ray_num, point_num)
     def forward(self, pts:torch.Tensor, ray_d: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
-        position_dim = 6 * self.position_flevel
-        encoded_x = positional_encoding(pts[:, :, :3], self.position_flevel)
-        encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], position_dim)
+        if self.instant_ngp:
+            modify_pts = pts.view([-1, 3])
+            encoded_x = self.encoding(modify_pts)
+            encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], self.encoding.n_output_dims)
 
+        else:
+            position_dim = 6 * self.position_flevel
+            encoded_x = positional_encoding(pts[:, :, :3], self.position_flevel)
+            encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], position_dim)
         if self.cat_origin:
             encoded_x = torch.cat((pts[:, :, :3], encoded_x), -1)
 

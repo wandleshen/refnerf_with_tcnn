@@ -48,13 +48,14 @@ def main(args):
     scene_scale         = args.scene_scale
     use_white_bkg       = args.white_bkg
     opt_mode            = args.opt_mode        
-    use_ref_nerf        = args.ref_nerf
     grad_clip_val       = args.grad_clip
     render_depth        = args.render_depth
     render_normal       = args.render_normal
     prop_normal         = args.prop_normal
     actual_lr           = args.lr * sample_ray_num / 512        # bigger batch -> higher lr (linearity)
     train_cnt, ep_start = None, None
+
+    instant_ngp         = args.instant_ngp
 
     if use_amp:
         from apex import amp
@@ -65,14 +66,11 @@ def main(args):
     
     # ======= instantiate model =====
     # NOTE: model is recommended to have loadFromFile method
-    if use_ref_nerf:
-        from py.ref_model import RefNeRF, WeightedNormalLoss, BackFaceLoss
-        normal_loss_func = WeightedNormalLoss(True)
-        bf_loss_func = BackFaceLoss() 
-        mip_net = RefNeRF(10, args.ide_level, hidden_unit = args.nerf_net_width, perturb_bottle_neck_w = args.bottle_neck_noise, use_srgb = args.use_srgb).cuda()
-    else:
-        from py.mip_model import MipNeRF
-        mip_net = MipNeRF(10, 4, hidden_unit = args.nerf_net_width).cuda()
+    from py.ref_model import RefNeRF, WeightedNormalLoss, BackFaceLoss
+    normal_loss_func = WeightedNormalLoss(True)
+    bf_loss_func = BackFaceLoss() 
+    mip_net = RefNeRF(10, args.ide_level, hidden_unit = args.nerf_net_width, perturb_bottle_neck_w = args.bottle_neck_noise, use_srgb = args.use_srgb).cuda()
+
     prop_net = ProposalNetwork(10, hidden_unit = args.prop_net_width).cuda()
 
     if debugging:
@@ -92,9 +90,9 @@ def main(args):
     ])
 
     # 数据集加载
-    trainset = CustomDataSet("../dataset/refnerf/%s/"%(dataset_name), transform_funcs, 
+    trainset = CustomDataSet("./data/%s/"%(dataset_name), transform_funcs, 
         scene_scale, True, use_alpha = False, white_bkg = use_white_bkg)
-    testset = CustomDataSet("../dataset/refnerf/%s/"%(dataset_name), transform_funcs, 
+    testset = CustomDataSet("./data/%s/"%(dataset_name), transform_funcs, 
         scene_scale, False, use_alpha = False, white_bkg = use_white_bkg)
     cam_fov_train, train_cam_tf = trainset.getCameraParam()
     r_c = trainset.r_c()
@@ -154,7 +152,7 @@ def main(args):
                 valid_pixels, valid_coords, train_tf, sample_ray_num, coarse_sample_pnum, train_focal, near_t, far_t, True
             )
             # output 
-            def run(is_ref_model = False):
+            def run():
                 coarse_samples.requires_grad = prop_normal                  
                 density = prop_net.forward(coarse_samples)
                 if prop_normal == True:
@@ -165,24 +163,18 @@ def main(args):
 
                 coarse_normal_loss = normal_loss = bf_loss = 0.
                 fine_lengths, below_idxs = inverseSample(prop_weights, coarse_lengths, fine_sample_pnum + 1, sort = True)
-                if is_ref_model == True:
-                    fine_samples, fine_lengths, below_idxs, sort_ids = NeRF.coarseFineMerge(coarse_cam_rays, coarse_lengths, fine_lengths, below_idxs)
-                    fine_pos, fine_dir = fine_samples.split((3, 3), dim = -1)
-                    fine_pos.requires_grad = True
-                    fine_rgbo, pred_normal = mip_net.forward(fine_pos, fine_dir)
-                    density_grad = -RefNeRF.get_grad(fine_rgbo[..., -1], fine_pos)
-                    fine_rgbo[..., -1] = F.softplus(fine_rgbo[..., -1] + 0.5)
-                    fine_rendered, weights, _ = NeRF.render(fine_rgbo, fine_lengths, coarse_cam_rays[:, 3:], mip_net.density_act)
-                    normal_loss = normal_loss_func(weights, density_grad, pred_normal)
-                    bf_loss = bf_loss_func(weights, pred_normal, fine_dir)
-                    if prop_normal == True:
-                        coarse_pt_fine_grad = RefNeRF.coarse_grad_select(density_grad, sort_ids, coarse_sample_pnum)
-                        coarse_normal_loss = normal_loss_func(prop_weights, coarse_pt_fine_grad.detach(), coarse_grad)
-                else:
-                    fine_lengths = fine_lengths[..., :-1]
-                    fine_samples = NeRF.length2pts(coarse_cam_rays, fine_lengths)
-                    fine_rgbo = mip_net.forward(fine_samples)
-                    fine_rendered, weights, _ = NeRF.render(fine_rgbo, fine_lengths, coarse_cam_rays[:, 3:])
+                fine_samples, fine_lengths, below_idxs, sort_ids = NeRF.coarseFineMerge(coarse_cam_rays, coarse_lengths, fine_lengths, below_idxs)
+                fine_pos, fine_dir = fine_samples.split((3, 3), dim = -1)
+                fine_pos.requires_grad = True
+                fine_rgbo, pred_normal = mip_net.forward(fine_pos, fine_dir)
+                density_grad = -RefNeRF.get_grad(fine_rgbo[..., -1], fine_pos)
+                fine_rgbo[..., -1] = F.softplus(fine_rgbo[..., -1] + 0.5)
+                fine_rendered, weights, _ = NeRF.render(fine_rgbo, fine_lengths, coarse_cam_rays[:, 3:], mip_net.density_act)
+                normal_loss = normal_loss_func(weights, density_grad, pred_normal)
+                bf_loss = bf_loss_func(weights, pred_normal, fine_dir)
+                if prop_normal == True:
+                    coarse_pt_fine_grad = RefNeRF.coarse_grad_select(density_grad, sort_ids, coarse_sample_pnum)
+                    coarse_normal_loss = normal_loss_func(prop_weights, coarse_pt_fine_grad.detach(), coarse_grad)
                 weight_bounds:torch.Tensor = getBounds(prop_weights, below_idxs)             # output shape: (ray_num, num of conical frustum)
                 opt.zero_grad()
                 img_loss:torch.Tensor = loss_func(fine_rendered, rgb_targets)                           # stop the gradient of NeRF MLP 
@@ -193,19 +185,19 @@ def main(args):
             if use_amp:
                 if opt_mode == "native":
                     with autocast():
-                        loss, img_loss = run(use_ref_nerf)
+                        loss, img_loss = run()
                         scaler.scale(loss).backward()
                         grad_clip_func(grad_vars, grad_clip_val)
                         scaler.step(opt)
                         scaler.update()
                 else:
-                    loss, img_loss = run(use_ref_nerf)
+                    loss, img_loss = run()
                     with amp.scale_loss(loss, opt) as scaled_loss:
                         scaled_loss.backward()
                     grad_clip_func(grad_vars, grad_clip_val)
                     opt.step()
             else:
-                loss, img_loss = run(use_ref_nerf)
+                loss, img_loss = run()
                 loss.backward()
                 grad_clip_func(grad_vars, grad_clip_val)
                 opt.step()
