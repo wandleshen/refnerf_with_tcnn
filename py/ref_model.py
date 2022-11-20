@@ -145,7 +145,7 @@ class RefNeRF(NeRF):
             torch.ones_like(func_val, device = func_val.device), retain_graph = True
         )
         # return grad / grad.norm(dim = -1, keepdim = True)
-        grad_norm = grad / grad.norm(dim = -1, keepdim = True)
+        grad_norm = grad.norm(dim = -1, keepdim = True)
         return grad / torch.maximum(torch.full_like(grad_norm, 1e-5), grad_norm)
 
 
