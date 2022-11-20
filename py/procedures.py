@@ -176,6 +176,7 @@ def get_parser():
     parser.add_argument("--scene_scale", type = float, default = 1.0, help = "Scale of the scene")
     parser.add_argument("--grad_clip", type = float, default = -0.01, help = "Gradient clipping parameter (Negative number means no clipping)")
     parser.add_argument("--pe_period_scale", type = float, default = 0.5, help = "Scale of positional encoding")
+    parser.add_argument("--seed", type = int, default = 0, help = "Seed of np and pytorch")
     # opt related
     parser.add_argument("--opt_mode", type = str, default = "O1", help = "Optimization mode: none, native (torch amp), O1, O2 (apex amp)")
     parser.add_argument("--min_ratio", type = float, default = 0.01, help = "Minimum for now_lr / lr")

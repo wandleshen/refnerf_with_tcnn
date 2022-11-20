@@ -68,6 +68,7 @@ class ProposalNetwork(nn.Module):
         self.encoding = hash_encoding(3)
         extra_dims = 3 if cat_origin else 0
         if instant_ngp:
+            hidden_unit = 32
             self.layers = nn.Sequential(
                 *makeMLP(self.encoding.n_output_dims + extra_dims, hidden_unit),
                 *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, hidden_unit),

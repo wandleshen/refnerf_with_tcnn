@@ -33,6 +33,9 @@ class RefNeRF(NeRF):
         self.encoding = hash_encoding(3)
         extra_width = 3 if cat_origin else 0
         if instant_ngp:
+            hidden_unit = 64
+            output_dim = 64
+            bottle_neck_dim = 32
             spatial_module_list = makeMLP(self.encoding.n_output_dims + extra_width, hidden_unit)
         else:
             spatial_module_list = makeMLP(6 * position_flevel + extra_width, hidden_unit)
@@ -82,7 +85,7 @@ class RefNeRF(NeRF):
     # for coarse network, input is obtained by sampling, sampling result is (ray_num, point_num, 9), (depth) (ray_num, point_num)
     def forward(self, pts:torch.Tensor, ray_d: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         if self.instant_ngp:
-            modify_pts = pts.view([-1, 3])
+            modify_pts = pts[:, :, :3].view([-1, 3])
             encoded_x = self.encoding(modify_pts)
             encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], self.encoding.n_output_dims)
 

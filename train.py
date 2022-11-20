@@ -8,6 +8,7 @@ from torch import optim
 from torchvision import transforms
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
+import numpy as np
 
 from py.timer import Timer
 from py.nerf_base import DecayLrScheduler, NeRF
@@ -259,6 +260,10 @@ if __name__ == "__main__":
     args = parser.parse_args()      # spherical rendering is disabled (for now)
     do_render = args.do_render
     opt_mode = args.opt_mode
+    if args.seed != 0:
+        torch.manual_seed(args.seed)
+        torch.cuda.manual_seed(args.seed)
+        np.random.seed(args.seed)
     if do_render:
         render_only(args, default_model_path, opt_mode)
     else:
