@@ -70,9 +70,9 @@ def main(args):
     from py.ref_model import RefNeRF, WeightedNormalLoss, BackFaceLoss
     normal_loss_func = WeightedNormalLoss(True)
     bf_loss_func = BackFaceLoss() 
-    mip_net = RefNeRF(10, args.ide_level, hidden_unit = args.nerf_net_width, perturb_bottle_neck_w = args.bottle_neck_noise, use_srgb = args.use_srgb).cuda()
+    mip_net = RefNeRF(10, args.ide_level, hidden_unit = args.nerf_net_width, perturb_bottle_neck_w = args.bottle_neck_noise, use_srgb = args.use_srgb, instant_ngp = args.instant_ngp).cuda()
 
-    prop_net = ProposalNetwork(10, hidden_unit = args.prop_net_width).cuda()
+    prop_net = ProposalNetwork(10, hidden_unit = args.prop_net_width, instant_ngp = args.instant_ngp).cuda()
 
     if debugging:
         for submodule in mip_net.modules():
