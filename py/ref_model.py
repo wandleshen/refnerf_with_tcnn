@@ -12,10 +12,16 @@ from torch.nn import functional as F
 from py.ref_func import generate_ide_fn
 from py.nerf_helper import makeMLP, hash_encoding, linear_to_srgb, positional_encoding
 
-# Inherited from NeRF (base class)
+""" 
+NeRF ---+---------> Mip-NeRF
+        +---------> Ref-NeRF
+"""
+
+# Inherited from NeRF (base class), Mip-NeRF is not concerned with this
+
 class RefNeRF(NeRF):
     def __init__(self, 
-        position_flevel, sh_max_level, 
+        position_flevel, sh_max_level, # position_flevel = 10
         bottle_neck_dim = 128,
         hidden_unit = 256, 
         output_dim = 256, 
@@ -43,6 +49,7 @@ class RefNeRF(NeRF):
             spatial_module_list.extend(makeMLP(hidden_unit, hidden_unit))
 
         # spatial MLP part (spa_xxxx)
+        # hash encoding is used in it
         self.spa_block1 = nn.Sequential(*spatial_module_list)       # MLP before skip connection
         if instant_ngp:
                 self.spa_block2 = nn.Sequential(
@@ -61,7 +68,8 @@ class RefNeRF(NeRF):
 
         self.rho_tau_head = nn.Linear(output_dim, 2)
         self.norm_col_tint_head = nn.Linear(output_dim, 9)  # output normal prediction, color, tint (all 3)
-        self.bottle_neck = nn.Linear(output_dim, bottle_neck_dim)
+        self.bottle_neck = nn.Linear(output_dim, bottle_neck_dim) # bottle_neck
+
         self.spec_rgb_head = nn.Sequential(*makeMLP(output_dim, 3, nn.Sigmoid()))
 
         dir_input_dim = 1 + bottle_neck_dim + self.dir_enc_dim
@@ -83,23 +91,30 @@ class RefNeRF(NeRF):
         self.apply(self.init_weight)
 
     # for coarse network, input is obtained by sampling, sampling result is (ray_num, point_num, 9), (depth) (ray_num, point_num)
+    # core part
     def forward(self, pts:torch.Tensor, ray_d: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        #===========================================================================================#
+        # maybe the positional encoding should not be abandoned
+        # how to insert hash-encoding ?
         if self.instant_ngp:
+            # encoding networks
+            # where is positional encoding?
             modify_pts = pts[:, :, :3].view([-1, 3])
             encoded_x = self.encoding(modify_pts)
             encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], self.encoding.n_output_dims)
-
         else:
             position_dim = 6 * self.position_flevel
             encoded_x = positional_encoding(pts[:, :, :3], self.position_flevel)
             encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], position_dim)
+
         if self.cat_origin:
             encoded_x = torch.cat((pts[:, :, :3], encoded_x), -1)
+        #===========================================================================================#
 
         x_tmp = self.spa_block1(encoded_x)
         encoded_x = torch.cat((encoded_x, x_tmp), dim = -1)
         intermediate = self.spa_block2(encoded_x)               # output of spatial network
-
+        # much more arguments ...
         [normal, diffuse_rgb, spec_tint] = self.norm_col_tint_head(intermediate).split((3, 3, 3), dim = -1)
         roughness, density = self.rho_tau_head(intermediate).split((1, 1), dim = -1)
         roughness = F.softplus(roughness - 1.)

@@ -1,5 +1,5 @@
 #-*-coding:utf-8-*-
-
+# Original NeRF
 """
     NeRF network Base Class (to be inherited from)
 """
@@ -50,6 +50,7 @@ class NeRF(nn.Module):
         return torch.cat((pts, rays[:, 3:].unsqueeze(-2).repeat(1, sample_pnum, 1)), dim = -1)                 # output is (ray_num, coarse_pts num + fine pts num, 6)
 
     @staticmethod
+    # abandoned in Mip-NeRF
     def coarseFineMerge(rays:torch.Tensor, c_zvals:torch.Tensor, f_zvals:torch.Tensor, f_inds: Optional[torch.Tensor] = None) -> torch.Tensor:
         zvals = torch.cat((f_zvals, c_zvals), dim = -1)
         zvals, sort_inds = torch.sort(zvals, dim = -1)
@@ -82,6 +83,7 @@ class NeRF(nn.Module):
     # depth shape: (ray_num, point_num)
     # need the norm of rays, shape: (ray_num, point_num)
     @staticmethod
+    # the same as Mip-NeRF
     def render(
         rgbo:torch.Tensor, depth:torch.Tensor, 
         ray_dirs:torch.Tensor, mul_norm:bool = True, 
