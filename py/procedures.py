@@ -126,6 +126,8 @@ def render_only(args, model_path: str, opt_level: str):
     else:
         from py.mip_model import MipNeRF
         mip_net = MipNeRF(10, 4, hidden_unit = args.nerf_net_width)
+    # it seems that the picture is clustered with many part of picture
+    # maybe that's why the
     prop_net = ProposalNetwork(10, hidden_unit = args.prop_net_width, instant_ngp = args.instant_ngp).cuda()
     if use_amp and opt_mode != "native":
         from apex import amp

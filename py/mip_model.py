@@ -10,6 +10,15 @@ from py.nerf_base import NeRF
 from py.nerf_helper import makeMLP, positional_encoding
 # import tinycudann as tcnn
 
+"""
+position->x -----> +==================+ -----[opacity_head]--------------------- ---> opacity
+                   +   spatial MLP    +
+                   + (lin_b1, lin_b2) + 
+                   +==================+ -----[bottle_neck]---> +=============+
+                                                               + color_layer + -----> color
+rotation->r -------------------------------------------------> +=============+
+"""
+
 # This module is shared by coarse and fine network, with no need to modify
 class MipNeRF(NeRF):
     def __init__(self, position_flevel, direction_flevel, hidden_unit = 256, cat_origin = True) -> None:
@@ -20,7 +29,8 @@ class MipNeRF(NeRF):
         for _ in range(3):
             module_list.extend(makeMLP(hidden_unit, hidden_unit))
 
-        self.lin_block1 = nn.Sequential(*module_list)       # MLP before skip connection
+
+        self.lin_block1 = nn.Sequential(*module_list)
         self.lin_block2 = nn.Sequential(
             *makeMLP(hidden_unit + 6 * position_flevel + extra_width, hidden_unit),
             *makeMLP(hidden_unit, hidden_unit), *makeMLP(hidden_unit, 256)
@@ -40,12 +50,15 @@ class MipNeRF(NeRF):
     # for coarse network, input is obtained by sampling, sampling result is (ray_num, point_num, 9), (depth) (ray_num, point_num)
     def forward(self, pts:torch.Tensor) -> torch.Tensor:
         position_dim, direction_dim = 6 * self.position_flevel, 6 * self.direction_flevel
-        encoded_x = positional_encoding(pts[:, :, :3], self.position_flevel)
         rotation = pts[:, :, 3:6].reshape(-1, 3)
-        rotation = rotation / rotation.norm(dim = -1, keepdim = True)
-        encoded_r = positional_encoding(rotation, self.direction_flevel)
+        rotation = rotation / rotation.norm(dim=-1, keepdim=True)
+
+        encoded_x = positional_encoding(pts[:, :, :3], self.position_flevel)
         encoded_x = encoded_x.view(pts.shape[0], pts.shape[1], position_dim)
+
+        encoded_r = positional_encoding(rotation, self.direction_flevel)
         encoded_r = encoded_r.view(pts.shape[0], pts.shape[1], direction_dim)
+
 
         if self.cat_origin:
             encoded_x = torch.cat((pts[:, :, :3], encoded_x), -1)
@@ -54,8 +67,12 @@ class MipNeRF(NeRF):
         tmp = self.lin_block1(encoded_x)
         encoded_x = torch.cat((encoded_x, tmp), dim = -1)
         encoded_x = self.lin_block2(encoded_x)
-        opacity = self.opacity_head(encoded_x)
+
+        opacity = self.opacity_head(encoded_x) # opacity
+
         encoded_x = self.bottle_neck(encoded_x)
-        rgb = self.rgb_layer(torch.cat((encoded_x, encoded_r), dim = -1))
+        rgb = self.rgb_layer(torch.cat((encoded_x, encoded_r), dim = -1)) #color
+
+        # return opacity and color of the point, preparing for rendering the image
         return torch.cat((rgb, opacity), dim = -1)      # output (ray_num, point_num, 4)
     

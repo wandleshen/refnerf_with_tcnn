@@ -2,6 +2,8 @@
 """
     NeRF with mip ideas baseline model
 """
+import pdb;
+
 import os
 import torch
 from torch import optim
